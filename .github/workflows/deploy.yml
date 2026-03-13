@@ -39,12 +39,10 @@ jobs:
         working-directory: ./svelteapp
         run: npm run build
 
-      # Only upload the Svelte build output
-        with:
-          path: ./svelteapp/build
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./svelteapp/build
 
   # Deployment job
   deploy:
