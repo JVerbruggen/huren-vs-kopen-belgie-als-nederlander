@@ -11,14 +11,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cd into svelteapp
+        run: cd svelteapp
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
-      - name: Cd into svelteapp
-        run: cd svelteapp
 
       - name: Install dependencies
         run: npm i
