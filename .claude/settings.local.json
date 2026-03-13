@@ -4,7 +4,8 @@
       "Bash(npx sv:*)",
       "Bash(npx -y sv create . --template minimal --types ts --no-add-ons --no-install)",
       "Bash(npm install:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "WebSearch"
     ]
   }
 }
