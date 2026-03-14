@@ -2,6 +2,11 @@
 	// === TYPES ===
 	type ExtraPost = { naam: string; bedrag: number; id: number };
 
+	// === MODE ===
+	let modus = $state<'simpel' | 'geavanceerd'>('simpel');
+	let wizardStap = $state(0);
+	let wizardKlaar = $state(false);
+
 	// === INPUTS (generic defaults, no personal data) ===
 	let aankoopprijs = $state(250000);
 	let eigenGeld = $state(25000);
@@ -118,10 +123,13 @@
 		(Math.pow(1 + maandRente, aantalMaanden) - 1)
 	);
 
-	// Woningwaarde
+	// Woningwaarde & verkoop componenten
 	let woningwaardeNa = $derived(aankoopprijs * Math.pow(1 + waardestijging / 100, verblijfsduurJaren));
-	let nettoVerkoopopbrengst = $derived(woningwaardeNa * 0.97);
-	let nettoTerugontvangen = $derived(nettoVerkoopopbrengst - restschuld);
+	let waardevermeerdering = $derived(woningwaardeNa - aankoopprijs);
+	let verkoopkosten = $derived(woningwaardeNa * 0.03);
+	let aflossingOpgebouwd = $derived(hypotheekbedrag - restschuld);
+	let eigenInbrengTerug = $derived(Math.max(0, eigenInbrengOpPrijs));
+	let nettoTerugontvangen = $derived(eigenInbrengTerug + aflossingOpgebouwd + waardevermeerdering - verkoopkosten);
 
 	// Koopkosten maand
 	let brandverzekering = 25;
@@ -171,11 +179,12 @@
 	// Gemiddelde maandlast huren over periode
 	let gemiddeldeHuurMaand = $derived(totaalHuurMetIndexatie / (verblijfsduurJaren * 12));
 
-	// Totale kosten
-	let totaalKopen = $derived(maandlastKopenNetto * 12 * verblijfsduurJaren + bijkomendeKosten);
-	let nettoKostenKopen = $derived(totaalKopen - nettoTerugontvangen);
-	let opportuniteitskosten = $derived(eigenGeld * 0.04 * verblijfsduurJaren);
-	let nettoKostenHuren = $derived(totaalHuurMetIndexatie + opportuniteitskosten);
+	// Totale kosten — cash-flow perspectief
+	let maandlastenTotaalKopen = $derived(maandlastKopenNetto * 12 * verblijfsduurJaren);
+	let totaalBetaaldKopen = $derived(eigenGeld + maandlastenTotaalKopen);
+	let nettoKostenKopen = $derived(totaalBetaaldKopen - nettoTerugontvangen);
+	let rendementEigenGeld = $derived(eigenGeld * 0.04 * verblijfsduurJaren);
+	let nettoKostenHuren = $derived(totaalHuurMetIndexatie - rendementEigenGeld);
 	let voordeelKopen = $derived(nettoKostenHuren - nettoKostenKopen);
 
 	// Breakeven
@@ -184,7 +193,7 @@
 			const ww = aankoopprijs * Math.pow(1 + pct / 100, verblijfsduurJaren);
 			const nvo = ww * 0.97;
 			const nto = nvo - restschuld;
-			const nkk = totaalKopen - nto;
+			const nkk = eigenGeld + maandlastenTotaalKopen - nto;
 			if (nkk <= nettoKostenHuren) return pct;
 		}
 		return -10;
@@ -197,10 +206,12 @@
 			const ww = aankoopprijs * Math.pow(1 + pct / 100, verblijfsduurJaren);
 			const nvo = ww * 0.97;
 			const nto = nvo - restschuld;
-			const nkk = totaalKopen - nto;
+			const nkk = eigenGeld + maandlastenTotaalKopen - nto;
 			return { pct, nkk, voordeel: nettoKostenHuren - nkk };
 		})
 	);
+	let scMaxBar = $derived(Math.max(...scenarios.map(x => x.nkk), nettoKostenHuren));
+	let scHuurPct = $derived(nettoKostenHuren / scMaxBar * 100);
 
 	// Warnings
 	let warnings = $derived((() => {
@@ -219,6 +230,17 @@
 	function toggleTip(id: string) {
 		activeTooltip = activeTooltip === id ? null : id;
 	}
+
+	// Nominale waarde marker positie (percentage op slider)
+	function nomPct(nom: number, min: number, max: number): number {
+		return ((nom - min) / (max - min)) * 100;
+	}
+
+	// Dynamische nominale waarden
+	let nomOnderhoudsreserve = $derived(Math.round(aankoopprijs * 0.01 / 12 / 5) * 5);
+
+	// Info overlay
+	let showInfoOverlay = $state(false);
 
 	function fmt(n: number, decimals = 0): string {
 		return n.toLocaleString('nl-NL', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -294,7 +316,11 @@
 				</label>
 				<label>
 					<span class="label-row"><span>Verwachte waardestijging</span><span class="val">{fmt(waardestijging, 1)}%/jr</span></span>
-					<input type="range" min="-5" max="10" step="0.5" bind:value={waardestijging}>
+					<div class="slider-wrap">
+						<div class="slider-track"></div>
+						<input type="range" min="-5" max="10" step="0.5" bind:value={waardestijging}>
+						<div class="slider-nom" style="left: {nomPct(3, -5, 10)}%" title="Historisch gemiddeld: 3%/jr"></div>
+					</div>
 				</label>
 			</div>
 
@@ -305,7 +331,7 @@
 						<span>GWE (gas/water/elektra)
 							<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('gwe'); }}>i</button>
 						</span>
-						<span class="val">{eur(gwePerMaand)}</span>
+						<span class="val cost">{eur(gwePerMaand)}</span>
 					</span>
 					{#if activeTooltip === 'gwe'}
 						<div class="tooltip">
@@ -316,14 +342,18 @@
 							Sterk afhankelijk van EPC-label en isolatie.
 						</div>
 					{/if}
-					<input type="range" min="80" max="350" step="5" bind:value={gwePerMaand}>
+					<div class="slider-wrap">
+						<div class="slider-track"></div>
+						<input type="range" min="80" max="350" step="5" bind:value={gwePerMaand}>
+						<div class="slider-nom" style="left: {nomPct(160, 80, 350)}%" title="Gemiddeld: €160"></div>
+					</div>
 				</label>
 				{#each extraGedeeldPosten as post (post.id)}
 					<div class="extra-post">
 						<input type="text" class="extra-name" bind:value={post.naam} placeholder="Naam">
 						<div class="extra-slider-row">
 							<input type="range" min="0" max="500" step="5" bind:value={post.bedrag}>
-							<span class="val extra-val">{eur(post.bedrag)}</span>
+							<span class="val extra-val cost">{eur(post.bedrag)}</span>
 							<button class="remove-btn" onclick={() => removePost(extraGedeeldPosten, post.id)}>×</button>
 						</div>
 					</div>
@@ -343,11 +373,11 @@
 			<h3>Huurkosten (maandelijks)</h3>
 			<div class="input-group">
 				<label>
-					<span class="label-row"><span>Kale huur</span><span class="val">{eur(maandelijksehuur)}</span></span>
+					<span class="label-row"><span>Kale huur</span><span class="val cost">{eur(maandelijksehuur)}</span></span>
 					<input type="range" min="500" max="2500" step="25" bind:value={maandelijksehuur}>
 				</label>
 				<label>
-					<span class="label-row"><span>Servicekosten</span><span class="val">{eur(huurServicekosten)}</span></span>
+					<span class="label-row"><span>Servicekosten</span><span class="val cost">{eur(huurServicekosten)}</span></span>
 					<input type="range" min="0" max="300" step="5" bind:value={huurServicekosten}>
 				</label>
 				<label>
@@ -360,14 +390,18 @@
 					{#if activeTooltip === 'huuridx'}
 						<div class="tooltip">Huur wordt jaarlijks geïndexeerd op basis van de gezondheidsindex. Historisch gemiddeld ~2% in België.</div>
 					{/if}
-					<input type="range" min="0" max="5" step="0.1" bind:value={huurIndexatie}>
+					<div class="slider-wrap">
+						<div class="slider-track"></div>
+						<input type="range" min="0" max="5" step="0.1" bind:value={huurIndexatie}>
+						<div class="slider-nom" style="left: {nomPct(2, 0, 5)}%" title="Historisch gemiddeld: 2%"></div>
+					</div>
 				</label>
 				{#each extraHuurPosten as post (post.id)}
 					<div class="extra-post">
 						<input type="text" class="extra-name" bind:value={post.naam} placeholder="Naam">
 						<div class="extra-slider-row">
 							<input type="range" min="0" max="500" step="5" bind:value={post.bedrag}>
-							<span class="val extra-val">{eur(post.bedrag)}</span>
+							<span class="val extra-val cost">{eur(post.bedrag)}</span>
 							<button class="remove-btn" onclick={() => removePost(extraHuurPosten, post.id)}>×</button>
 						</div>
 					</div>
@@ -391,19 +425,23 @@
 						<span>VME-bijdrage
 							<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('vme'); }}>i</button>
 						</span>
-						<span class="val">{eur(vmeBijdrage)}</span>
+						<span class="val cost">{eur(vmeBijdrage)}</span>
 					</span>
 					{#if activeTooltip === 'vme'}
 						<div class="tooltip">Verplicht bij appartementen. Dekt gemeenschappelijk onderhoud, verzekering gebouw, reservefonds. Vraag exact bedrag op vóór bod.</div>
 					{/if}
-					<input type="range" min="0" max="400" step="10" bind:value={vmeBijdrage}>
+					<div class="slider-wrap">
+						<div class="slider-track"></div>
+						<input type="range" min="0" max="400" step="10" bind:value={vmeBijdrage}>
+						<div class="slider-nom" style="left: {nomPct(150, 0, 400)}%" title="Gemiddeld appartement: €150"></div>
+					</div>
 				</label>
 				<label>
 					<span class="label-row">
 						<span>Schuldsaldoverzekering
 							<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('sbi'); }}>i</button>
 						</span>
-						<span class="val">{eur(sbiBijdrage)}</span>
+						<span class="val cost">{eur(sbiBijdrage)}</span>
 					</span>
 					{#if activeTooltip === 'sbi'}
 						<div class="tooltip">Verplicht bij Belgische hypotheek. Aflopende overlijdensverzekering. Vergelijk min. 3 offertes; niet aftrekbaar in NL.</div>
@@ -415,31 +453,39 @@
 						<span>Onroerende voorheffing
 							<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('ovh'); }}>i</button>
 						</span>
-						<span class="val">{eur(onroerendeVoorheffingMaand)}</span>
+						<span class="val cost">{eur(onroerendeVoorheffingMaand)}</span>
 					</span>
 					{#if activeTooltip === 'ovh'}
 						<div class="tooltip">Jaarlijkse belasting op onroerend goed, geïnd door Vlabel. Gebaseerd op geïndexeerd kadastraal inkomen × regionaal tarief × gemeentelijk opcentiemen. Gemeentebelasting zit hier inbegrepen. Typisch €800–1.200/jaar voor een appartement van €250k.</div>
 					{/if}
-					<input type="range" min="30" max="200" step="5" bind:value={onroerendeVoorheffingMaand}>
+					<div class="slider-wrap">
+						<div class="slider-track"></div>
+						<input type="range" min="30" max="200" step="5" bind:value={onroerendeVoorheffingMaand}>
+						<div class="slider-nom" style="left: {nomPct(70, 30, 200)}%" title="Gemiddeld: €70/mnd"></div>
+					</div>
 				</label>
 				<label>
 					<span class="label-row">
 						<span>Onderhoudsreserve
 							<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('onderhoud'); }}>i</button>
 						</span>
-						<span class="val">{eur(onderhoudsreserve)}</span>
+						<span class="val cost">{eur(onderhoudsreserve)}</span>
 					</span>
 					{#if activeTooltip === 'onderhoud'}
 						<div class="tooltip">Privé-onderhoud van je wooneenheid (exclusief VME-gemeenschappelijk). Denk aan: schilderwerk, keukenapparatuur, sanitair, cv-ketel onderhoud. Vuistregel: 1% van woningwaarde per jaar ÷ 12. Bij een woning van €250k ≈ €200/mnd reservering, maar eerste jaren vaak lager.</div>
 					{/if}
-					<input type="range" min="0" max="200" step="5" bind:value={onderhoudsreserve}>
+					<div class="slider-wrap">
+						<div class="slider-track"></div>
+						<input type="range" min="0" max="500" step="5" bind:value={onderhoudsreserve}>
+						<div class="slider-nom" style="left: {nomPct(nomOnderhoudsreserve, 0, 500)}%" title="Vuistregel 1%: €{nomOnderhoudsreserve}"></div>
+					</div>
 				</label>
 				{#each extraKoopPosten as post (post.id)}
 					<div class="extra-post">
 						<input type="text" class="extra-name" bind:value={post.naam} placeholder="Naam">
 						<div class="extra-slider-row">
 							<input type="range" min="0" max="500" step="5" bind:value={post.bedrag}>
-							<span class="val extra-val">{eur(post.bedrag)}</span>
+							<span class="val extra-val cost">{eur(post.bedrag)}</span>
 							<button class="remove-btn" onclick={() => removePost(extraKoopPosten, post.id)}>×</button>
 						</div>
 					</div>
@@ -456,6 +502,36 @@
 				</div>
 			</div>
 
+			<h3>
+				Eenmalige aankoopkosten
+				<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('eenmalig'); }}>i</button>
+			</h3>
+			{#if activeTooltip === 'eenmalig'}
+				<div class="tooltip">Bijkomende kosten zijn nooit meefinancierbaar — altijd uit eigen middelen vóór aktedag. Pas bedragen aan als je concrete offertes hebt.</div>
+			{/if}
+			<div class="editable-costs">
+				<div class="ec-row">
+					<span>Registratierechten ({registratierechtenPct}%)</span>
+					<span class="ec-value">{eur(registratierechten)}</span>
+				</div>
+				<div class="ec-row">
+					<span>Notaris aankoopakte</span>
+					<input type="number" class="ec-input" bind:value={notarisAankoop} min="0" step="100">
+				</div>
+				<div class="ec-row">
+					<span>Notaris kredietakte</span>
+					<input type="number" class="ec-input" bind:value={notarisKrediet} min="0" step="100">
+				</div>
+				<div class="ec-row">
+					<span>Bankdossier + schatting</span>
+					<input type="number" class="ec-input" bind:value={bankDossier} min="0" step="50">
+				</div>
+				<div class="ec-row total-row-ec">
+					<span><strong>Totaal bijkomend</strong></span>
+					<span><strong>{eur(bijkomendeKosten)}</strong></span>
+				</div>
+			</div>
+
 			<h3>Inkomen</h3>
 			<div class="input-group">
 				<label>
@@ -463,7 +539,7 @@
 						<span>Bruto jaarinkomen
 							<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('bruto'); }}>i</button>
 						</span>
-						<span class="val">{eur(brutoJaarinkomen)}</span>
+						<span class="val income">{eur(brutoJaarinkomen)}</span>
 					</span>
 					{#if activeTooltip === 'bruto'}
 						<div class="tooltip">Bepaalt je marginaal belastingtarief voor de hypotheekrenteaftrek. Boven €75.518: 49,50% (maar HRA geplafonneerd op 36,97%).</div>
@@ -471,7 +547,7 @@
 					<input type="range" min="20000" max="150000" step="1000" bind:value={brutoJaarinkomen}>
 				</label>
 				<label>
-					<span class="label-row"><span>Netto maandinkomen</span><span class="val">{eur(nettoMaandinkomen)}</span></span>
+					<span class="label-row"><span>Netto maandinkomen</span><span class="val income">{eur(nettoMaandinkomen)}</span></span>
 					<input type="range" min="1500" max="10000" step="50" bind:value={nettoMaandinkomen}>
 				</label>
 			</div>
@@ -542,6 +618,17 @@
 						<div class="bar-marker" style="left: 80%"><span>80%</span></div>
 						<div class="bar-marker" style="left: 90%"><span>90%</span></div>
 					</div>
+				</div>
+				<div class="quotiteit-uitleg" style="color: {quotiteitKleur}">
+					{#if quotiteit <= 0.80}
+						Uitstekend — beste rentetarieven, geen risico-opslag.
+					{:else if quotiteit <= 0.90}
+						Goed — standaardtarief, mogelijk lichte opslag boven 80%.
+					{:else if quotiteit <= 1.0}
+						Hoog — verwacht renteopslag 0,10–0,25%. Meer eigen inbreng verlaagt je rente.
+					{:else}
+						Te hoog — financiering onwaarschijnlijk voor bestaande woningen boven 100%.
+					{/if}
 				</div>
 				<div class="row-between sub-metrics">
 					<span>Hypotheek: {eur(hypotheekbedrag)}</span>
@@ -620,24 +707,29 @@
 				<div class="cost-summary">
 					<div class="cost-block kopen-block">
 						<div class="cost-block-title">Kopen</div>
-						<div class="cost-line"><span>Maandlasten ({verblijfsduurJaren} jr)</span><span class="cost-neg">{eur(maandlastKopenNetto * 12 * verblijfsduurJaren)}</span></div>
-						<div class="cost-line"><span>Eenmalige kosten</span><span class="cost-neg">{eur(bijkomendeKosten)}</span></div>
-						<div class="cost-line"><span>Totaal uitgegeven</span><span class="cost-neg">{eur(totaalKopen)}</span></div>
-						<div class="cost-line pos"><span>Terugontvangen bij verkoop</span><span class="cost-pos">+{eur(nettoTerugontvangen)}</span></div>
+						<div class="cost-line"><span>Eigen geld (eenmalig)</span><span class="cost-val out">− {eur(eigenGeld)}</span></div>
+						<div class="cost-line"><span>Maandlasten × {verblijfsduurJaren * 12} mnd</span><span class="cost-val out">− {eur(maandlastenTotaalKopen)}</span></div>
+						<div class="cost-line subtotal"><span>Totaal betaald</span><span class="cost-val out">− {eur(totaalBetaaldKopen)}</span></div>
+						<div class="cost-line sub-detail"><span>↳ Eigen inbreng terug</span><span class="cost-val in">+ {eur(eigenInbrengTerug)}</span></div>
+						<div class="cost-line sub-detail"><span>↳ Aflossing (opgebouwd vermogen)</span><span class="cost-val in">+ {eur(aflossingOpgebouwd)}</span></div>
+						<div class="cost-line sub-detail"><span>↳ Waardevermeerdering ({fmt(waardestijging,1)}%/jr)</span><span class="cost-val {waardevermeerdering >= 0 ? 'in' : 'out'}">{waardevermeerdering >= 0 ? '+' : '−'} {eur(Math.abs(waardevermeerdering))}</span></div>
+						<div class="cost-line sub-detail"><span>↳ Verkoopkosten (±3%)</span><span class="cost-val out">− {eur(verkoopkosten)}</span></div>
+						<div class="cost-line subtotal"><span>Netto terug bij verkoop</span><span class="cost-val in">+ {eur(nettoTerugontvangen)}</span></div>
 						<div class="cost-line result">
 							<span>Netto kosten kopen</span>
-							<span class="cost-result">{eur(nettoKostenKopen)}</span>
+							<span class="cost-val out">− {eur(nettoKostenKopen)}</span>
 						</div>
 					</div>
 					<div class="cost-block huren-block">
 						<div class="cost-block-title">Huren</div>
-						<div class="cost-line"><span>Huurlasten ({verblijfsduurJaren} jr, geïndexeerd)</span><span class="cost-neg">{eur(totaalHuurMetIndexatie)}</span></div>
-						<div class="cost-line"><span>Opportuniteitskosten spaargeld</span><span class="cost-neg">{eur(opportuniteitskosten)}</span></div>
+						<div class="cost-line"><span>Huurlasten × {verblijfsduurJaren * 12} mnd (geïndexeerd)</span><span class="cost-val out">− {eur(totaalHuurMetIndexatie)}</span></div>
+						<div class="cost-line"><span>Rendement spaargeld (4%/jr)</span><span class="cost-val in">+ {eur(rendementEigenGeld)}</span></div>
 						<div class="cost-line result">
 							<span>Netto kosten huren</span>
-							<span class="cost-result">{eur(nettoKostenHuren)}</span>
+							<span class="cost-val out">− {eur(nettoKostenHuren)}</span>
 						</div>
 					</div>
+					<div class="cost-explain">Eigen geld wordt bij kopen vastgezet in de woning en komt (deels) terug bij verkoop. Bij huren blijft het beschikbaar om te beleggen.</div>
 					<div class="cost-diff" class:positive={voordeelKopen > 0} class:negative={voordeelKopen <= 0}>
 						Verschil: <strong>{voordeelKopen > 0 ? 'kopen' : 'huren'} {eur(Math.abs(voordeelKopen))} voordeliger</strong>
 					</div>
@@ -651,29 +743,45 @@
 					<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('scenario'); }}>i</button>
 				</h2>
 				{#if activeTooltip === 'scenario'}
-					<div class="tooltip">Toont netto kosten van kopen bij verschillende waardestijgingen. De huurkosten ({eur(nettoKostenHuren)}) zijn hierin constant. Groen = kopen voordeliger.</div>
+					<div class="tooltip">Wat als de woning meer of minder stijgt in waarde? De balk toont de netto kosten van kopen bij elk scenario. De stippellijn is de grens: links ervan is kopen voordeliger, rechts is huren voordeliger.</div>
 				{/if}
-				<div class="sc-ref">Netto kosten huren: {eur(nettoKostenHuren)}</div>
 				<div class="scenario-chart">
+					<div class="sc-header">
+						<span class="sc-col-label">Waardestijging</span>
+						<span class="sc-col-label">Netto kosten kopen over {verblijfsduurJaren} jr</span>
+					</div>
 					{#each scenarios as s}
-						{@const maxBar = Math.max(...scenarios.map(x => Math.abs(x.nkk)))}
-						<div class="sc-row">
-							<span class="sc-label">{s.pct > 0 ? '+' : ''}{s.pct}%/jr</span>
-							<div class="sc-bar-wrap">
-								<div
-									class="sc-bar"
-									class:winner={s.voordeel > 0}
-									class:loser={s.voordeel <= 0}
-									style="width: {Math.max(Math.abs(s.nkk) / maxBar * 100, 8)}%"
-								>
-									{eur(s.nkk)}
-								</div>
-							</div>
-							<span class="sc-verdict" class:positive={s.voordeel > 0} class:negative={s.voordeel <= 0}>
-								{s.voordeel > 0 ? 'kopen +' : 'huren +'}{eur(Math.abs(s.voordeel))}
+						{@const isCurrent = Math.abs(s.pct - waardestijging) < 0.05}
+						<div class="sc-row" class:sc-current={isCurrent}>
+							<span class="sc-label">
+								{#if isCurrent}<span class="sc-badge">nominaal</span>{/if}
+								{s.pct > 0 ? '+' : ''}{s.pct}%
 							</span>
+							<div class="sc-bar-area">
+								<div class="sc-bar-wrap">
+									<div
+										class="sc-bar"
+										class:winner={s.voordeel > 0}
+										class:loser={s.voordeel <= 0}
+										style="width: {Math.max(s.nkk / scMaxBar * 100, 4)}%"
+									>
+										<span class="sc-bar-label">− {eur(s.nkk)}</span>
+									</div>
+									<div class="sc-huur-line" style="left: {scHuurPct}%" title="Netto kosten huren: − {eur(nettoKostenHuren)}"></div>
+								</div>
+								<span class="sc-verdict" class:positive={s.voordeel > 0} class:negative={s.voordeel <= 0}>
+									{#if s.voordeel > 0}
+										kopen {eur(s.voordeel)} voordeliger
+									{:else}
+										huren {eur(Math.abs(s.voordeel))} voordeliger
+									{/if}
+								</span>
+							</div>
 						</div>
 					{/each}
+					<div class="sc-legend">
+						<span class="sc-legend-item"><span class="sc-legend-line"></span> Netto kosten huren: − {eur(nettoKostenHuren)}</span>
+					</div>
 				</div>
 			</section>
 
@@ -725,38 +833,6 @@
 			</section>
 
 			<!-- EENMALIGE KOSTEN (editable) -->
-			<section class="card compact">
-				<h2>
-					Eenmalige aankoopkosten
-					<button class="info-btn" onclick={(e) => { e.stopPropagation(); toggleTip('eenmalig'); }}>i</button>
-				</h2>
-				{#if activeTooltip === 'eenmalig'}
-					<div class="tooltip">Bijkomende kosten zijn nooit meefinancierbaar — altijd uit eigen middelen vóór aktedag. Pas bedragen aan als je concrete offertes hebt.</div>
-				{/if}
-				<div class="editable-costs">
-					<div class="ec-row">
-						<span>Registratierechten ({registratierechtenPct}%)</span>
-						<span class="ec-value">{eur(registratierechten)}</span>
-					</div>
-					<div class="ec-row">
-						<span>Notaris aankoopakte</span>
-						<input type="number" class="ec-input" bind:value={notarisAankoop} min="0" step="100">
-					</div>
-					<div class="ec-row">
-						<span>Notaris kredietakte</span>
-						<input type="number" class="ec-input" bind:value={notarisKrediet} min="0" step="100">
-					</div>
-					<div class="ec-row">
-						<span>Bankdossier + schatting</span>
-						<input type="number" class="ec-input" bind:value={bankDossier} min="0" step="50">
-					</div>
-					<div class="ec-row total-row-ec">
-						<span><strong>Totaal bijkomend</strong></span>
-						<span><strong>{eur(bijkomendeKosten)}</strong></span>
-					</div>
-				</div>
-				<p class="table-note">Besparing t.o.v. 12% standaardtarief: {eur(aankoopprijs * 0.10)}</p>
-			</section>
 		</div>
 	</div>
 
@@ -764,6 +840,58 @@
 		<p>Indicatieve berekening — raadpleeg een belastingadviseur voor persoonlijk advies. Registratierechten 2% geldt bij enige eigen woning in Vlaanderen. Stand maart 2026.</p>
 	</footer>
 </div>
+
+<!-- Info overlay -->
+<button class="info-fab" onclick={() => showInfoOverlay = !showInfoOverlay} title="Hoe werkt deze calculator?">?</button>
+
+{#if showInfoOverlay}
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="overlay-backdrop" onclick={() => showInfoOverlay = false}>
+	<div class="overlay-panel" onclick={(e) => e.stopPropagation()}>
+		<button class="overlay-close" onclick={() => showInfoOverlay = false}>×</button>
+		<h2 class="overlay-title">Hoe werkt deze calculator?</h2>
+		<p class="overlay-intro">Deze tool vergelijkt de financiële kant van een woning <strong>kopen</strong> versus <strong>huren</strong> in Vlaanderen, specifiek voor Nederlanders. Alle berekeningen draaien lokaal in je browser — er worden geen gegevens verstuurd.</p>
+
+		<div class="overlay-grid">
+			<div class="overlay-card">
+				<div class="overlay-icon">🎚️</div>
+				<h3>Links: jouw situatie</h3>
+				<p>Pas de sliders aan naar jouw situatie. Streepjes op sliders markeren de <em>gemiddelde waarde</em> — zo zie je direct of je boven of onder het gemiddelde zit.</p>
+			</div>
+			<div class="overlay-card">
+				<div class="overlay-icon">📊</div>
+				<h3>Rechts: de resultaten</h3>
+				<p>De resultaten updaten direct. Bovenaan zie je of je het kunt betalen, daaronder de vergelijking tussen kopen en huren.</p>
+			</div>
+			<div class="overlay-card">
+				<div class="overlay-icon">🏠</div>
+				<h3>Netto kostenvergelijking</h3>
+				<p>Alle geldstromen op een rij: wat je betaalt, wat je terugkrijgt bij verkoop, en het rendement als je je spaargeld belegt bij huren. <span class="overlay-out">Rood = geld uit</span>, <span class="overlay-in">groen = geld terug</span>.</p>
+			</div>
+			<div class="overlay-card">
+				<div class="overlay-icon">📈</div>
+				<h3>Scenario's</h3>
+				<p>Niemand weet hoe de woningmarkt zich ontwikkelt. De scenario-grafiek toont wat er gebeurt bij verschillende waardestijgingen — van -3% (daling) tot +7% (sterke groei).</p>
+			</div>
+			<div class="overlay-card">
+				<div class="overlay-icon">🇳🇱</div>
+				<h3>Hypotheekrenteaftrek (HRA)</h3>
+				<p>Als Nederlander met 90%+ inkomen in NL heb je recht op hypotheekrenteaftrek, ook voor een Belgische woning. Het geplafonneerde tarief is 36,97%.</p>
+			</div>
+			<div class="overlay-card">
+				<div class="overlay-icon">💡</div>
+				<h3>Tips</h3>
+				<p>Druk op de <button class="info-btn-demo">i</button> knopjes voor uitleg per onderdeel. De waarden bij de eenmalige kosten kun je aanpassen als je offertes hebt.</p>
+			</div>
+		</div>
+
+		<div class="overlay-footer">
+			<p>Gebaseerd op Vlaamse wetgeving en Nederlandse belastingregels (stand 2026). Geen vervanging voor professioneel advies.</p>
+		</div>
+	</div>
+</div>
+{/if}
 
 <style>
 	:root {
@@ -876,7 +1004,7 @@
 	}
 
 	.compact { padding: 10px 12px; }
-	.inputs-card { position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow-y: auto; }
+	.inputs-card { position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow-y: auto; overflow-x: hidden; }
 
 	.input-group { display: flex; flex-direction: column; gap: 4px; }
 	.input-group label { display: flex; flex-direction: column; gap: 1px; }
@@ -891,9 +1019,12 @@
 
 	.val {
 		font-weight: 600;
-		color: var(--green-700);
+		color: var(--slate-600);
 		font-variant-numeric: tabular-nums;
 	}
+
+	.val.cost { color: #b91c1c; }
+	.val.income { color: var(--green-700); }
 
 	/* Info buttons */
 	.info-btn {
@@ -959,6 +1090,36 @@
 		border: 2px solid white;
 		box-shadow: 0 1px 3px rgba(0,0,0,0.2);
 		cursor: pointer;
+	}
+
+	/* Slider with nominal marker */
+	.slider-wrap {
+		position: relative;
+		width: 100%;
+		overflow: hidden;
+	}
+	.slider-wrap input[type="range"] { position: relative; z-index: 2; background: transparent; }
+	.slider-track {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 50%;
+		height: 6px;
+		transform: translateY(-50%);
+		background: var(--slate-200);
+		border-radius: 3px;
+		z-index: 0;
+	}
+	.slider-nom {
+		position: absolute;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		width: 3px;
+		height: 14px;
+		border-radius: 1px;
+		background: var(--slate-500);
+		z-index: 1;
+		pointer-events: none;
 	}
 
 	/* Extra posts */
@@ -1107,7 +1268,8 @@
 	.bar-marker { position: absolute; top: -2px; width: 1px; height: 14px; background: var(--slate-400); }
 	.bar-marker span { position: absolute; top: 16px; left: -10px; font-size: 9px; color: var(--slate-400); }
 
-	.sub-metrics { font-size: 11px; color: var(--slate-500); margin-top: 8px; }
+	.quotiteit-uitleg { font-size: 11px; font-weight: 500; margin-top: 4px; }
+	.sub-metrics { font-size: 11px; color: var(--slate-500); margin-top: 4px; }
 
 	/* MONTHLY */
 	.month-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -1178,19 +1340,35 @@
 		color: var(--slate-600);
 	}
 
-	.cost-line.pos { color: var(--green-600); }
-	.cost-neg { font-variant-numeric: tabular-nums; }
-	.cost-pos { font-variant-numeric: tabular-nums; color: var(--green-600); font-weight: 500; }
+	.cost-val { font-variant-numeric: tabular-nums; text-align: right; min-width: 90px; }
+	.cost-val.out { color: #b91c1c; }
+	.cost-val.in { color: var(--green-600); font-weight: 500; }
+
+	.cost-line.sub-detail { font-size: 10px; color: var(--slate-400); padding-left: 6px; }
+
+	.cost-line.subtotal {
+		border-top: 1px dashed var(--slate-300);
+		margin-top: 2px;
+		padding-top: 3px;
+		font-weight: 600;
+		color: var(--slate-700);
+	}
 
 	.cost-line.result {
-		border-top: 1.5px solid var(--slate-300);
+		border-top: 2px solid var(--slate-400);
 		margin-top: 3px;
 		padding-top: 4px;
 		font-weight: 700;
 		color: var(--slate-800);
+		--c-result: var(--slate-800);
 	}
 
-	.cost-result { font-variant-numeric: tabular-nums; }
+	.cost-explain {
+		font-size: 10px;
+		color: var(--slate-400);
+		font-style: italic;
+		padding: 2px 4px;
+	}
 
 	.cost-diff {
 		text-align: center;
@@ -1203,20 +1381,52 @@
 	.cost-diff.negative { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
 
 	/* SCENARIOS */
-	.sc-ref { font-size: 10px; color: var(--slate-400); margin-bottom: 4px; font-style: italic; }
-
 	.scenario-chart { display: flex; flex-direction: column; gap: 3px; }
+
+	.sc-header { display: flex; gap: 8px; font-size: 9px; color: var(--slate-400); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+	.sc-col-label:first-child { min-width: 105px; }
 
 	.sc-row {
 		display: grid;
-		grid-template-columns: 50px 1fr 130px;
+		grid-template-columns: 105px 1fr;
 		align-items: center;
-		gap: 6px;
+		gap: 4px;
+		padding: 2px 0;
 	}
 
-	.sc-label { font-size: 11px; font-weight: 600; color: var(--slate-600); text-align: right; font-variant-numeric: tabular-nums; }
+	.sc-row.sc-current {
+		background: var(--green-50);
+		border-radius: 4px;
+		padding: 3px 4px;
+		margin: 0 -4px;
+	}
 
-	.sc-bar-wrap { height: 18px; }
+	.sc-label {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--slate-600);
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 4px;
+	}
+
+	.sc-badge {
+		font-size: 8px;
+		background: var(--green-600);
+		color: white;
+		padding: 1px 4px;
+		border-radius: 3px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.3px;
+	}
+
+	.sc-bar-area { display: flex; flex-direction: column; gap: 1px; }
+
+	.sc-bar-wrap { height: 20px; position: relative; }
 
 	.sc-bar {
 		height: 100%;
@@ -1232,11 +1442,26 @@
 	}
 
 	.sc-bar.winner { background: var(--green-500); }
-	.sc-bar.loser { background: var(--slate-400); }
+	.sc-bar.loser { background: #b91c1c; }
 
-	.sc-verdict { font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
-	.sc-verdict.positive { color: var(--green-600); }
-	.sc-verdict.negative { color: #dc2626; }
+	.sc-bar-label { font-weight: 600; }
+
+	.sc-huur-line {
+		position: absolute;
+		top: -2px;
+		bottom: -2px;
+		width: 3px;
+		background: none;
+		border-left: 2.5px dashed #fbbf24;
+		filter: drop-shadow(0 0 1px rgba(0,0,0,0.5));
+	}
+
+	.sc-verdict { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--slate-500); }
+	.sc-verdict.positive { color: var(--green-600); font-weight: 600; }
+	.sc-verdict.negative { color: #b91c1c; }
+
+	.sc-legend { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 10px; color: var(--slate-500); }
+	.sc-legend-line { display: inline-block; width: 12px; height: 0; border-top: 2.5px dashed #fbbf24; vertical-align: middle; margin-right: 3px; }
 
 	/* TABLE */
 	table { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -1274,7 +1499,7 @@
 		gap: 8px;
 	}
 
-	.ec-value { font-variant-numeric: tabular-nums; font-weight: 500; }
+	.ec-value { font-variant-numeric: tabular-nums; font-weight: 500; color: #b91c1c; }
 
 	.ec-input {
 		width: 80px;
@@ -1292,11 +1517,11 @@
 
 
 	.total-row-ec {
-		border-top: 2px solid var(--green-200);
+		border-top: 2px solid #fecaca;
 		margin-top: 2px;
 		padding-top: 4px;
 		font-weight: 700;
-		color: var(--green-800);
+		color: #991b1b;
 	}
 
 	footer {
@@ -1326,4 +1551,101 @@
 		.grid-main { grid-template-columns: 1fr; }
 		.inputs-card { position: static; max-height: none; }
 	}
+
+	/* Info FAB */
+	.info-fab {
+		position: fixed;
+		bottom: 20px;
+		right: 20px;
+		width: 48px;
+		height: 48px;
+		border-radius: 50%;
+		background: var(--green-600);
+		color: white;
+		font-size: 22px;
+		font-weight: 700;
+		border: none;
+		cursor: pointer;
+		box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+		z-index: 1000;
+		transition: transform 0.15s;
+	}
+	.info-fab:hover { transform: scale(1.1); background: var(--green-700); }
+
+	/* Overlay */
+	.overlay-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0,0,0,0.5);
+		z-index: 1001;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 20px;
+	}
+	.overlay-panel {
+		background: white;
+		border-radius: 12px;
+		max-width: 720px;
+		width: 100%;
+		max-height: 85vh;
+		overflow-y: auto;
+		padding: 28px 32px;
+		position: relative;
+		box-shadow: 0 24px 48px rgba(0,0,0,0.2);
+	}
+	.overlay-close {
+		position: absolute;
+		top: 12px;
+		right: 16px;
+		background: none;
+		border: none;
+		font-size: 24px;
+		color: var(--slate-400);
+		cursor: pointer;
+		line-height: 1;
+	}
+	.overlay-close:hover { color: var(--slate-700); }
+	.overlay-title { font-size: 20px; color: var(--green-800); margin: 0 0 8px; }
+	.overlay-intro { font-size: 13px; color: var(--slate-600); line-height: 1.5; margin: 0 0 20px; }
+	.overlay-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 12px;
+	}
+	@media (max-width: 560px) { .overlay-grid { grid-template-columns: 1fr; } }
+	.overlay-card {
+		background: var(--slate-50);
+		border-radius: 8px;
+		padding: 14px 16px;
+		border: 1px solid var(--slate-200);
+	}
+	.overlay-icon { font-size: 24px; margin-bottom: 6px; }
+	.overlay-card h3 { font-size: 13px; color: var(--slate-800); margin: 0 0 4px; }
+	.overlay-card p { font-size: 12px; color: var(--slate-500); line-height: 1.5; margin: 0; }
+	.overlay-out { color: #b91c1c; font-weight: 600; }
+	.overlay-in { color: var(--green-600); font-weight: 600; }
+	.info-btn-demo {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: var(--green-100);
+		color: var(--green-700);
+		border: 1px solid var(--green-300);
+		font-size: 10px;
+		font-weight: 700;
+		cursor: default;
+		vertical-align: middle;
+	}
+	.overlay-footer {
+		margin-top: 16px;
+		padding-top: 12px;
+		border-top: 1px solid var(--slate-200);
+	}
+	.overlay-footer p { font-size: 11px; color: var(--slate-400); margin: 0; font-style: italic; }
+
+	@media print { .info-fab { display: none; } }
 </style>
