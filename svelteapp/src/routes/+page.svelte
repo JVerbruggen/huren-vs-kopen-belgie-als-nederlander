@@ -270,6 +270,178 @@
 		</div>
 	</header>
 
+	<!-- Mode toggle -->
+	<div class="mode-bar">
+		<button class="mode-btn" class:active={modus === 'simpel'} onclick={() => { modus = 'simpel'; wizardKlaar = false; wizardStap = 0; }}>Simpele modus</button>
+		<button class="mode-btn" class:active={modus === 'geavanceerd'} onclick={() => { modus = 'geavanceerd'; }}>Geavanceerde modus</button>
+	</div>
+
+	{#if modus === 'simpel'}
+	<!-- WIZARD -->
+	<div class="wizard-container">
+		{#if !wizardKlaar}
+			<div class="wizard-card">
+				<div class="wizard-progress">
+					{#each [0,1,2,3] as s}
+						<div class="wizard-dot" class:done={wizardStap > s} class:current={wizardStap === s}></div>
+					{/each}
+				</div>
+
+				{#if wizardStap === 0}
+					<h2 class="wizard-title">Wat kost de woning?</h2>
+					<p class="wizard-desc">Vul de vraagprijs in van de woning die je op het oog hebt, en hoeveel spaargeld je kunt inleggen.</p>
+					<div class="wizard-fields">
+						<label class="wizard-label">
+							<span>Aankoopprijs</span>
+							<div class="wizard-input-row">
+								<input type="range" min="150000" max="500000" step="5000" bind:value={aankoopprijs}>
+								<span class="wizard-val">{eur(aankoopprijs)}</span>
+							</div>
+						</label>
+						<label class="wizard-label">
+							<span>Eigen geld (spaargeld)</span>
+							<div class="wizard-input-row">
+								<input type="range" min="0" max="200000" step="1000" bind:value={eigenGeld}>
+								<span class="wizard-val">{eur(eigenGeld)}</span>
+							</div>
+						</label>
+					</div>
+
+				{:else if wizardStap === 1}
+					<h2 class="wizard-title">Wat betaal je nu aan huur?</h2>
+					<p class="wizard-desc">Je huidige kale huur per maand, exclusief gas/water/elektra.</p>
+					<div class="wizard-fields">
+						<label class="wizard-label">
+							<span>Kale huur per maand</span>
+							<div class="wizard-input-row">
+								<input type="range" min="500" max="2500" step="25" bind:value={maandelijksehuur}>
+								<span class="wizard-val">{eur(maandelijksehuur)}</span>
+							</div>
+						</label>
+					</div>
+
+				{:else if wizardStap === 2}
+					<h2 class="wizard-title">Je hypotheek</h2>
+					<p class="wizard-desc">De actuele rente en hoe lang je de hypotheek wilt laten lopen.</p>
+					<div class="wizard-fields">
+						<label class="wizard-label">
+							<span>Hypotheekrente</span>
+							<div class="wizard-input-row">
+								<input type="range" min="1" max="6" step="0.1" bind:value={hypotheekrente}>
+								<span class="wizard-val">{fmt(hypotheekrente, 1)}%</span>
+							</div>
+						</label>
+						<label class="wizard-label">
+							<span>Looptijd</span>
+							<div class="wizard-input-row">
+								<input type="range" min="10" max="30" step="1" bind:value={looptijdJaren}>
+								<span class="wizard-val">{looptijdJaren} jaar</span>
+							</div>
+						</label>
+					</div>
+
+				{:else if wizardStap === 3}
+					<h2 class="wizard-title">Hoe lang blijf je?</h2>
+					<p class="wizard-desc">Hoe lang verwacht je in België te wonen? Dit beïnvloedt of kopen rendabel is.</p>
+					<div class="wizard-fields">
+						<label class="wizard-label">
+							<span>Verwachte verblijfsduur</span>
+							<div class="wizard-input-row">
+								<input type="range" min="1" max="10" step="1" bind:value={verblijfsduurJaren}>
+								<span class="wizard-val">{verblijfsduurJaren} jaar</span>
+							</div>
+						</label>
+						<label class="wizard-label">
+							<span>Netto maandinkomen</span>
+							<div class="wizard-input-row">
+								<input type="range" min="1500" max="10000" step="50" bind:value={nettoMaandinkomen}>
+								<span class="wizard-val">{eur(nettoMaandinkomen)}</span>
+							</div>
+						</label>
+					</div>
+				{/if}
+
+				<div class="wizard-nav">
+					{#if wizardStap > 0}
+						<button class="wizard-btn secondary" onclick={() => wizardStap--}>Vorige</button>
+					{:else}
+						<div></div>
+					{/if}
+					{#if wizardStap < 3}
+						<button class="wizard-btn primary" onclick={() => wizardStap++}>Volgende</button>
+					{:else}
+						<button class="wizard-btn primary" onclick={() => wizardKlaar = true}>Bekijk resultaat</button>
+					{/if}
+				</div>
+			</div>
+		{:else}
+			<!-- WIZARD RESULT -->
+			<div class="wizard-result">
+				<div class="wizard-result-header" style="background: {voordeelKopen > 0 ? 'var(--green-50)' : '#fef2f2'}; border-color: {voordeelKopen > 0 ? 'var(--green-200)' : '#fecaca'}">
+					<div class="wizard-result-icon">{voordeelKopen > 0 ? '🏠' : '🔑'}</div>
+					<h2 class="wizard-result-title" style="color: {voordeelKopen > 0 ? 'var(--green-800)' : '#991b1b'}">
+						{voordeelKopen > 0 ? 'Kopen' : 'Huren'} is {eur(Math.abs(voordeelKopen))} voordeliger over {verblijfsduurJaren} jaar
+					</h2>
+				</div>
+
+				<div class="wizard-result-grid">
+					<div class="wizard-result-card">
+						<span class="wizard-result-label">Maandlast kopen</span>
+						<span class="wizard-result-value cost">− {eur(maandlastKopenNetto)}/mnd</span>
+					</div>
+					<div class="wizard-result-card">
+						<span class="wizard-result-label">Maandlast huren</span>
+						<span class="wizard-result-value cost">− {eur(maandlastHurenJaar1)}/mnd</span>
+					</div>
+					<div class="wizard-result-card">
+						<span class="wizard-result-label">Netto kosten kopen</span>
+						<span class="wizard-result-value cost">− {eur(nettoKostenKopen)}</span>
+					</div>
+					<div class="wizard-result-card">
+						<span class="wizard-result-label">Netto kosten huren</span>
+						<span class="wizard-result-value cost">− {eur(nettoKostenHuren)}</span>
+					</div>
+					<div class="wizard-result-card">
+						<span class="wizard-result-label">Quotiteit</span>
+						<span class="wizard-result-value" style="color: {quotiteitKleur}">{fmt(quotiteit * 100, 1)}%</span>
+					</div>
+					<div class="wizard-result-card">
+						<span class="wizard-result-label">Hypotheek % netto</span>
+						<span class="wizard-result-value" style="color: {maandlastHypotheek / nettoMaandinkomen > 0.35 ? '#ef4444' : maandlastHypotheek / nettoMaandinkomen > 0.33 ? '#f59e0b' : '#22c55e'}">{fmt(maandlastHypotheek / nettoMaandinkomen * 100, 1)}%</span>
+					</div>
+				</div>
+
+				<div class="wizard-hints">
+					<h3>Waar moet je op letten?</h3>
+					<ul>
+						{#if quotiteit > 0.90}
+							<li>Je quotiteit is hoog ({fmt(quotiteit * 100, 1)}%). Probeer meer eigen geld in te leggen voor betere rentetarieven.</li>
+						{/if}
+						{#if maandlastHypotheek / nettoMaandinkomen > 0.33}
+							<li>Je hypotheeklast is meer dan 1/3 van je netto inkomen. Belgische banken kunnen dit als risico zien.</li>
+						{/if}
+						{#if verblijfsduurJaren < 3}
+							<li>Bij minder dan 3 jaar verblijf is er risico op naheffing van registratierechten (+ 20% boete).</li>
+						{/if}
+						{#if voordeelKopen > 0}
+							<li>Kopen is voordeliger, maar houd rekening met onvoorziene kosten (onderhoud, VME, belastingen).</li>
+						{:else}
+							<li>Huren is op dit moment voordeliger. Bij langere verblijfsduur of hogere waardestijging kan kopen alsnog rendabel worden.</li>
+						{/if}
+						<li>Als Nederlander heb je recht op hypotheekrenteaftrek (HRA) — dit is al meeberekend.</li>
+					</ul>
+				</div>
+
+				<div class="wizard-actions">
+					<button class="wizard-btn secondary" onclick={() => { wizardKlaar = false; wizardStap = 0; }}>Opnieuw</button>
+					<button class="wizard-btn primary" onclick={() => modus = 'geavanceerd'}>Bekijk alle details</button>
+				</div>
+			</div>
+		{/if}
+	</div>
+	{/if}
+
+	{#if modus === 'geavanceerd'}
 	<!-- Warnings: fixed height container so sliders don't jump -->
 	<div class="warnings-container">
 		{#each warnings as w}
@@ -835,6 +1007,8 @@
 			<!-- EENMALIGE KOSTEN (editable) -->
 		</div>
 	</div>
+
+	{/if}
 
 	<footer>
 		<p>Indicatieve berekening — raadpleeg een belastingadviseur voor persoonlijk advies. Registratierechten 2% geldt bij enige eigen woning in Vlaanderen. Stand maart 2026.</p>
@@ -1648,4 +1822,127 @@
 	.overlay-footer p { font-size: 11px; color: var(--slate-400); margin: 0; font-style: italic; }
 
 	@media print { .info-fab { display: none; } }
+
+	/* MODE BAR */
+	.mode-bar {
+		display: flex;
+		justify-content: center;
+		gap: 0;
+		padding: 8px 16px;
+		background: white;
+		border-bottom: 1px solid var(--slate-200);
+	}
+	.mode-btn {
+		padding: 6px 24px;
+		font-size: 13px;
+		font-weight: 600;
+		border: 2px solid var(--green-300);
+		background: white;
+		color: var(--slate-600);
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+	.mode-btn:first-child { border-radius: 6px 0 0 6px; }
+	.mode-btn:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+	.mode-btn.active {
+		background: var(--green-600);
+		color: white;
+		border-color: var(--green-600);
+	}
+
+	/* WIZARD */
+	.wizard-container {
+		max-width: 560px;
+		margin: 24px auto;
+		padding: 0 16px;
+	}
+	.wizard-card {
+		background: white;
+		border-radius: 12px;
+		padding: 28px 32px;
+		box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+		border: 1px solid var(--slate-200);
+	}
+	.wizard-progress {
+		display: flex;
+		gap: 8px;
+		justify-content: center;
+		margin-bottom: 24px;
+	}
+	.wizard-dot {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: var(--slate-200);
+		transition: all 0.2s;
+	}
+	.wizard-dot.current { background: var(--green-500); transform: scale(1.2); }
+	.wizard-dot.done { background: var(--green-300); }
+	.wizard-title { font-size: 18px; color: var(--slate-800); margin: 0 0 6px; }
+	.wizard-desc { font-size: 13px; color: var(--slate-500); margin: 0 0 20px; line-height: 1.4; }
+	.wizard-fields { display: flex; flex-direction: column; gap: 14px; }
+	.wizard-label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 500; color: var(--slate-700); }
+	.wizard-input-row { display: flex; align-items: center; gap: 12px; }
+	.wizard-input-row input[type="range"] { flex: 1; }
+	.wizard-val { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--slate-800); min-width: 80px; text-align: right; }
+	.wizard-nav { display: flex; justify-content: space-between; margin-top: 28px; }
+	.wizard-btn {
+		padding: 8px 20px;
+		border-radius: 6px;
+		font-size: 13px;
+		font-weight: 600;
+		cursor: pointer;
+		border: none;
+		transition: all 0.15s;
+	}
+	.wizard-btn.primary { background: var(--green-600); color: white; }
+	.wizard-btn.primary:hover { background: var(--green-700); }
+	.wizard-btn.secondary { background: var(--slate-100); color: var(--slate-600); border: 1px solid var(--slate-300); }
+	.wizard-btn.secondary:hover { background: var(--slate-200); }
+
+	/* WIZARD RESULT */
+	.wizard-result {
+		background: white;
+		border-radius: 12px;
+		padding: 0;
+		box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+		border: 1px solid var(--slate-200);
+		overflow: hidden;
+	}
+	.wizard-result-header {
+		padding: 24px 28px;
+		text-align: center;
+		border-bottom: 1px solid var(--slate-200);
+	}
+	.wizard-result-icon { font-size: 36px; margin-bottom: 8px; }
+	.wizard-result-title { font-size: 18px; margin: 0; }
+	.wizard-result-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1px;
+		background: var(--slate-200);
+		border-bottom: 1px solid var(--slate-200);
+	}
+	.wizard-result-card {
+		background: white;
+		padding: 14px 18px;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.wizard-result-label { font-size: 11px; color: var(--slate-500); }
+	.wizard-result-value { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--slate-800); }
+	.wizard-result-value.cost { color: #b91c1c; }
+	.wizard-hints {
+		padding: 18px 24px;
+		border-bottom: 1px solid var(--slate-200);
+	}
+	.wizard-hints h3 { font-size: 13px; color: var(--slate-700); margin: 0 0 8px; }
+	.wizard-hints ul { margin: 0; padding-left: 18px; }
+	.wizard-hints li { font-size: 12px; color: var(--slate-600); line-height: 1.6; }
+	.wizard-actions {
+		padding: 16px 24px;
+		display: flex;
+		justify-content: space-between;
+	}
 </style>
